@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-brydz_core = {path = "../brydz_core", features = ["protocol", "speedy"]}
+brydz_core = {path = "../brydz_core", features = ["protocol", "speedy", "serde_postcard", "serde_ron"]}
 tokio = {version = "1.21.1", features = ["net", "rt", "rt-multi-thread", "io-util"]}
 log = "0.4.17"
 

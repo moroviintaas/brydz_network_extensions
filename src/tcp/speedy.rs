@@ -1,13 +1,18 @@
+use std::error::Error;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::sync::mpsc::{Receiver, Sender};
-use log::{debug, warn};
+use log::{debug, warn, info};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
-use tokio::net::TcpStream;
+use tokio::net::{TcpStream};
+use tokio::runtime::{Builder, Runtime};
+use brydz_core::error::BridgeErrorStd;
+use brydz_core::protocol::{ClientDealMessage, ServerDealMessage};
 use brydz_core::speedy;
 use crate::tcp::TcpForwardError;
 use crate::tcp::TcpForwardError::StreamSendError;
-use brydz_core::speedy::LittleEndian;
+use brydz_core::speedy::{Context, LittleEndian, Readable, Writable};
+use brydz_core::world::comm::{CommunicationEnd, CommunicationEndStd};
 
 pub struct TcpSpeedyForwarder<'a, RT: speedy::Readable<'a, LittleEndian> + Debug, WT: speedy::Writable<LittleEndian> + Debug> {
     read_stream: OwnedReadHalf,
@@ -77,4 +82,59 @@ impl<'a, RT: Debug +  speedy::Readable<'a, LittleEndian>, WT: Debug + speedy::Wr
 
         }
     }
+}
+
+pub struct TokioTcpComm{
+    stream: TcpStream,
+    rt: Runtime
+}
+
+impl TokioTcpComm{
+    pub fn new(stream: TcpStream) -> Self{
+        let rt = Builder::new_current_thread().build().unwrap();
+        Self{stream,  rt }
+    }
+}
+/*
+impl<'a, OT, IT, E: Error, C: Context> CommunicationEnd<OT, IT, E> for TokioTcpComm
+where OT: Writable<C> + Debug, IT: Readable<'a, C> + Debug{
+    fn send(&self, message: OT) -> Result<(), E> {
+        let mut buffer = [0u8;1024];
+        message.write_to_buffer(&mut buffer).unwrap(); //to impl E: From<speedy::Error>
+
+        self.rt.block_on(|| {
+            self.stream.writable().unwrap();
+            self.stream.try_write(&buffer).unwrap()
+        })
+    }
+
+    fn recv(&mut self) -> Result<IT, E> {
+        let mut buffer = [0u8;1024];
+        self.rt.block_on(|| {
+            self.stream.readable();
+            let mut completed = false;
+            while !completed{
+                match self.stream.try_read_buf(&mut buffer){
+                    Ok(_) => {completed = true;}
+                    Err(_) => {}
+                }
+            }
+
+
+        });
+        debug!("Received speedy data: {:?}", &buffer);
+        let it = IT::read_from_buffer_copying_data(&buffer).unwrap();
+        info!("Received data: {:?}", it);
+        Ok(it)
+
+    }
+
+    fn try_recv(&mut self) -> Result<IT, E> {
+        todo!()
+    }
+}
+*/
+
+pub struct TcpComm{
+    stream: std::net::TcpStream
 }
