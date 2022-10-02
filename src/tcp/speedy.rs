@@ -1,18 +1,18 @@
 use std::error::Error;
 use std::fmt::Debug;
+use std::io::{Write, Read};
 use std::marker::PhantomData;
 use std::sync::mpsc::{Receiver, Sender};
 use log::{debug, warn, info};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpStream};
 use tokio::runtime::{Builder, Runtime};
-use brydz_core::error::BridgeErrorStd;
-use brydz_core::protocol::{ClientDealMessage, ServerDealMessage};
+use brydz_core::error::{ CommError, FormatError};
 use brydz_core::speedy;
 use crate::tcp::TcpForwardError;
 use crate::tcp::TcpForwardError::StreamSendError;
-use brydz_core::speedy::{Context, LittleEndian, Readable, Writable};
-use brydz_core::world::comm::{CommunicationEnd, CommunicationEndStd};
+use brydz_core::speedy::{ LittleEndian, Readable, Writable};
+use brydz_core::world::comm::{CommunicationEnd};
 
 pub struct TcpSpeedyForwarder<'a, RT: speedy::Readable<'a, LittleEndian> + Debug, WT: speedy::Writable<LittleEndian> + Debug> {
     read_stream: OwnedReadHalf,
@@ -95,33 +95,41 @@ impl TokioTcpComm{
         Self{stream,  rt }
     }
 }
-/*
-impl<'a, OT, IT, E: Error, C: Context> CommunicationEnd<OT, IT, E> for TokioTcpComm
-where OT: Writable<C> + Debug, IT: Readable<'a, C> + Debug{
-    fn send(&self, message: OT) -> Result<(), E> {
+
+impl<'a, OT, IT, E: Error> CommunicationEnd<OT, IT, E> for TokioTcpComm
+where OT: Writable<LittleEndian> + Debug, IT: Readable<'a, LittleEndian> + Debug,
+E: From<CommError>{
+    fn send(&mut self, message: OT) -> Result<(), E> {
         let mut buffer = [0u8;1024];
         message.write_to_buffer(&mut buffer).unwrap(); //to impl E: From<speedy::Error>
 
-        self.rt.block_on(|| {
-            self.stream.writable().unwrap();
-            self.stream.try_write(&buffer).unwrap()
-        })
+        self.rt.block_on(async {
+            if self.stream.writable().await.is_err(){
+                warn!("Error waiting for TCP socket to be ready to write.");
+            }
+            
+        });
+        self.stream.try_write(&buffer).map_or_else(|_| {Err(CommError::TrySendError.into())}, |_| { Ok(())})
+
     }
 
     fn recv(&mut self) -> Result<IT, E> {
         let mut buffer = [0u8;1024];
-        self.rt.block_on(|| {
-            self.stream.readable();
-            let mut completed = false;
-            while !completed{
-                match self.stream.try_read_buf(&mut buffer){
-                    Ok(_) => {completed = true;}
-                    Err(_) => {}
-                }
+        self.rt.block_on(async  {
+            if self.stream.readable().await.is_err(){
+                warn!("Error waiting for TCP socket to be ready to read.")
             }
+            
 
 
         });
+        let mut completed = false;
+            while !completed{
+                match self.stream.try_read(&mut buffer){
+                    Ok(_) => {completed = true;}
+                    Err(_) => {return Err(CommError::RecvError.into());}
+                }
+            }
         debug!("Received speedy data: {:?}", &buffer);
         let it = IT::read_from_buffer_copying_data(&buffer).unwrap();
         info!("Received data: {:?}", it);
@@ -130,11 +138,98 @@ where OT: Writable<C> + Debug, IT: Readable<'a, C> + Debug{
     }
 
     fn try_recv(&mut self) -> Result<IT, E> {
-        todo!()
+        let mut buffer = [0u8;1024];
+        self.rt.block_on(async  {
+            if self.stream.readable().await.is_err(){
+                warn!("Error waiting for TCP socket to be ready to read.")
+            }
+            
+
+
+        });
+
+        if self.stream.try_read(&mut buffer).is_err(){
+            return Err(CommError::TryRecvError.into());
+        }
+
+        debug!("Received speedy data: {:?}", &buffer);
+        let it = IT::read_from_buffer_copying_data(&buffer).unwrap();
+        info!("Received data: {:?}", it);
+        Ok(it)
     }
 }
-*/
+
 
 pub struct TcpComm{
     stream: std::net::TcpStream
+}
+
+impl TcpComm{
+    pub fn new(stream : std::net::TcpStream) -> Self{
+        Self{stream}
+    }
+}
+
+//this need to be removed in future, size of buffer should be provided by generic paramaters <OT> and <IT> in CommunictaionEnd's impl
+const BRIDGE_COMM_BUFFER_SIZE: usize = 256; 
+
+impl<'a, OT, IT, E: Error> CommunicationEnd<OT, IT, E> for TcpComm
+where OT: Writable<LittleEndian> + Debug, IT: Readable<'a, LittleEndian> + Debug,
+E: From<CommError> + From<FormatError>{
+    fn send(&mut self, message: OT) -> Result<(), E> {
+        
+        let mut buffer = [0u8; BRIDGE_COMM_BUFFER_SIZE];
+        if message.write_to_buffer(&mut buffer).is_err(){
+            return Err(FormatError::SerializeError.into())
+        }
+        match self.stream.write_all(&buffer){
+            Ok(_) => Ok(()),
+            Err(_) => Err(CommError::SendError.into()),
+        }
+    }
+
+    fn recv(&mut self) -> Result<IT, E> {
+        self.stream.set_nonblocking(false).unwrap();
+        let mut buffer = [0u8; BRIDGE_COMM_BUFFER_SIZE];
+        let mut received = false;
+        while !received {
+            match self.stream.read(&mut buffer){
+                Ok(0) => {},
+                Ok(_) => {
+                    received = true;
+                },
+                Err(_e) => {return Err(CommError::RecvError.into())}
+            }
+        }
+        match IT::read_from_buffer_copying_data(&buffer){
+            Ok(m) => Ok(m),
+            Err(_) => Err(FormatError::DeserializeError.into())
+        }
+    }
+
+    fn try_recv(&mut self) -> Result<IT, E> {
+        let mut buffer = [0u8; BRIDGE_COMM_BUFFER_SIZE];
+        self.stream.set_nonblocking(true).unwrap();
+        
+        match self.stream.read(&mut buffer){
+            Ok(0) => {
+                //debug!("TryRecvError");
+                Err(CommError::TryRecvError.into())
+            }
+            Ok(_n) => {
+                //debug!("Tcp TryRecv with {} bytes", n);
+                match IT::read_from_buffer_copying_data(&buffer){
+                    Ok(m) => Ok(m),
+                    Err(_) => Err(FormatError::DeserializeError.into())
+                }
+            },
+            Err(_e) => {
+                
+                Err(CommError::TryRecvError.into())
+            }
+        }
+        
+        
+    }
+
 }
