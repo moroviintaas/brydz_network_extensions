@@ -7,12 +7,14 @@ use log::{debug, warn, info};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpStream};
 use tokio::runtime::{Builder, Runtime};
-use brydz_core::error::{ CommError, FormatError};
-use brydz_core::speedy;
+use brydz_framework::brydz_core::error::{ FormatError};
+use brydz_framework::brydz_core::speedy;
 use crate::tcp::TcpForwardError;
 use crate::tcp::TcpForwardError::StreamSendError;
-use brydz_core::speedy::{ LittleEndian, Readable, Writable};
-use brydz_core::world::comm::{CommunicationEnd};
+use brydz_framework::brydz_core::speedy::{ LittleEndian, Readable, Writable};
+use brydz_framework::error::comm::CommError;
+use brydz_framework::world::comm::{CommunicationEnd};
+
 
 pub struct TcpSpeedyForwarder<'a, RT: speedy::Readable<'a, LittleEndian> + Debug, WT: speedy::Writable<LittleEndian> + Debug> {
     read_stream: OwnedReadHalf,
