@@ -3,10 +3,9 @@ use std::fmt::Debug;
 use std::io::{Write, Read};
 use std::marker::PhantomData;
 use std::sync::mpsc::{Receiver, Sender};
-use log::{debug, warn, info};
+use log::{debug, warn};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpStream};
-use tokio::runtime::{Builder, Runtime};
 use brydz_framework::brydz_core::error::{ FormatError};
 use brydz_framework::brydz_core::speedy;
 use crate::tcp::TcpForwardError;
@@ -85,7 +84,7 @@ impl<'a, RT: Debug +  speedy::Readable<'a, LittleEndian>, WT: Debug + speedy::Wr
         }
     }
 }
-
+/*
 pub struct TokioTcpComm{
     stream: TcpStream,
     rt: Runtime
@@ -98,7 +97,7 @@ impl TokioTcpComm{
     }
 }
 
-impl<'a, OT, IT, E: Error> CommunicationEnd<OT, IT, E> for TokioTcpComm
+impl<'a, OT, IT, E: Error> CommunicationEnd for TokioTcpComm
 where OT: Writable<LittleEndian> + Debug, IT: Readable<'a, LittleEndian> + Debug,
 E: From<CommError>{
     fn send(&mut self, message: OT) -> Result<(), E> {
@@ -159,23 +158,32 @@ E: From<CommError>{
         info!("Received data: {:?}", it);
         Ok(it)
     }
+
+    type OutputType = OT;
+
+    type InputType = IT;
+
+    type Error = E;
+}
+*/
+
+pub struct TcpComm<OT, IT, E: Error>{
+    stream: std::net::TcpStream,
+    _ot: PhantomData<OT>,
+    _it: PhantomData<IT>,
+    _e: PhantomData<E>
 }
 
-
-pub struct TcpComm{
-    stream: std::net::TcpStream
-}
-
-impl TcpComm{
+impl<OT, IT, E: Error> TcpComm<OT, IT, E>{
     pub fn new(stream : std::net::TcpStream) -> Self{
-        Self{stream}
+        Self{stream, _ot: PhantomData::default(), _it: PhantomData::default(), _e: PhantomData::default()}
     }
 }
 
 //this need to be removed in future, size of buffer should be provided by generic paramaters <OT> and <IT> in CommunictaionEnd's impl
 const BRIDGE_COMM_BUFFER_SIZE: usize = 256; 
 
-impl<'a, OT, IT, E: Error> CommunicationEnd<OT, IT, E> for TcpComm
+impl<'a, OT, IT, E: Error> CommunicationEnd for TcpComm<OT, IT, E>
 where OT: Writable<LittleEndian> + Debug, IT: Readable<'a, LittleEndian> + Debug,
 E: From<CommError> + From<FormatError>{
     fn send(&mut self, message: OT) -> Result<(), E> {
@@ -233,5 +241,11 @@ E: From<CommError> + From<FormatError>{
         
         
     }
+
+    type OutputType = OT;
+
+    type InputType = IT;
+
+    type Error = E;
 
 }
